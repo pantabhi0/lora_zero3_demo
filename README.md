@@ -348,6 +348,48 @@ Environment variables (all required, no defaults):
 
 ---
 
+## Retraining
+
+Re-running training is just re-running the same launch commands. Use a
+**fresh `--run-tag`** every retrain — without it, the config's
+`run_tag: default` kicks in and the live CSV writer **overwrites**
+`logs/run_default_rank0.csv` and `logs/default/adapter` from the original
+measured runs. A new tag preserves history (`logs/run_<tag>_rank0.csv`,
+`logs/<tag>/adapter/`, one new `summary.csv` row).
+
+**Baseline (single GPU, laptop A only):**
+
+```bash
+uv run python -m src.train_lora --config configs/lora_config.yaml --run-tag myrun
+```
+
+**2-node DDP (both machines, same moment, same tag):**
+
+```bash
+# A:
+scripts/launch_rank0.sh --run-tag myrun
+# B:
+scripts/launch_rank1.sh --run-tag myrun
+```
+
+**Changing hyperparameters.** Edit `configs/lora_config.yaml`
+(`batch_size`, `seq_length`, `grad_accumulation_steps`, `subset_size`,
+`num_epochs`, `learning_rate`, LoRA rank/alpha) or override on the CLI
+(`--subset-size 2000 --epochs 2`). The seed is fixed, so an otherwise
+unchanged retrain reproduces the identical sample order and nearly identical
+curves.
+
+**Notes**
+
+- No Docker rebuild needed unless `src/` changed — the image is current and
+  the `hf_cache/` mount means no re-download.
+- Both nodes must use the **same `--run-tag`** for a 2-node run.
+- After a container run the logs are root-owned:
+  `sudo chown -R $USER: logs/`.
+- Expected times at the default config: ≈40 min baseline, ≈20 min 2-node.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
