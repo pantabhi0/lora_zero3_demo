@@ -1,0 +1,19 @@
+[project]
+name = "hetero-demo"
+version = "0.1.0"
+description = "2-node LoRA fine-tuning demo over gigabit: single GTX 1650 vs DDP"
+requires-python = ">=3.10"
+dependencies = [
+    "datasets>=3.0",
+    "peft>=0.13",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "textual>=0.80",
+    "torch>=2.4",
+    "transformers>=4.46",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]

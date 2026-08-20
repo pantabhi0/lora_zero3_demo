@@ -1,0 +1,30 @@
+# --- Per-machine secrets / local config ---
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# --- HuggingFace cache (multi-GB; downloads once per machine) ---
+hf_cache/
+
+# --- Training artifacts ---
+# Saved LoRA adapters are ~45 MB each — not source, keep them out.
+logs/*/
+# ...but commit the small metric CSVs that README/report.md reference.
+!logs/*.csv
+
+# --- Container image tarball (6.8 GB) ---
+hetero-demo.tar
+
+# --- Session transcripts (may embed .env values) ---
+conversations/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
