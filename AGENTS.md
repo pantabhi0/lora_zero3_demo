@@ -26,15 +26,9 @@ guaranteed speedup (no Tensor Cores on GTX 1650; FP16 ≈ FP32 rate).
 - Phase 1 (bare-metal hello) PASS: both ranks print `all_reduce ok:
   tensor[0]=3.0` + clean exit. Phase 2 (dockerized hello) PASS: same result
   inside containers (`--network host`, `--env-file .env`).
-- Phase 3 baseline PASS (laptop A, single GPU): 250 updates, 2410s wall,
-  0.415 samples/s, final loss 0.521, criterion MET (first25=2.46→last25=0.37).
-  Adapter → logs/baseline/adapter.
-- Phase 4 (2-node DDP) PASS: 125 updates, 1230s wall (1.96× vs baseline),
-  0.81 samples/s, comm=381ms/update (3.9% of step), final loss 0.343, curve
-  match vs baseline OK max_rel=0.0017. Adapter → logs/default/adapter (run_tag
-  quirk: config lora_config.yaml sets `run_tag: default`, so the auto
-  "2node"/"baseline" fallback in train_lora.py never fires; Phase 3 used
-  `--run-tag baseline` explicitly).
+- Historical Phase 3/4 artifacts (`baseline`/`default`) are retained for
+  debugging only and have no academic meaning. Academic results use the four
+  tags documented under `## Academic campaign` below.
 - Phase 5 validation PASS: torch.profiler cross-check run — comm-hook wall
   time 3785ms vs profiler raw NCCL kernel time 3777ms over the same window
   (0.2% agreement) → hook methodology trusted. (Validate-loop bug found: the
@@ -42,13 +36,55 @@ guaranteed speedup (no Tensor Cores on GTX 1650; FP16 ≈ FP32 rate).
   fixed to mirror the real loop with no_sync — next image build has it; the
   current image b20dbdcf3028 still has the old validate code, not re-run.)
   Phase 5 metric 4 (extra batch/accum runs) still OPTIONAL per descope order.
-- Phase 6 (TUI) PASS: `src/tui.py` tested on A in both plain and rich modes
-  against logs/run_default_rank0.csv (125 rows read, per-step compute+comm
-  rendered, rich table OK). Live side-by-side demo = user runs
-  `uv run python -m src.tui --csv logs/run_default_rank<N>.csv` on each laptop
-  (A=rank0, B=rank1).
+- Phase 6 WebUI PASS: legacy CSV viewer, academic pair dashboard, static PNG
+  serving, ZIP export, Academic Summary table, and A-only inference tab tested.
+  `src/tui.py` remains terminal fallback.
 - Logs from container runs are root-owned — `sudo chown -R $USER: logs/` after
   each run before reading/infer.
+
+## Academic campaign (new work)
+- Historical `baseline` and `default` artifacts have no academic meaning.
+  Academic conclusions use exactly four new tags only:
+  `baseline_1k`, `2node_1k`, `baseline_long`, `2node_long`.
+- Model remains `Qwen/Qwen2.5-0.5B` base. New campaign uses correct causal-LM
+  prompt masking (`labels=-100` before response tokens), a fixed disjoint
+  held-out split of 100 examples, seed 42, and rank-disjoint training data.
+- Reserve validation examples after one fixed seed shuffle, before selecting
+  training subset. Validation runs every 10% of updates plus final update;
+  both ranks evaluate, synchronize with barrier, and rank 0 writes authoritative
+  validation CSV. Token-weighted loss; safe perplexity.
+- New metrics are independent of validated CUDA event timing: nvidia-smi at 1Hz,
+  peak VRAM, loader+H2D data time, explicit other residual, validation time,
+  metadata/config snapshots, and effective LoRA payload bandwidth estimate.
+  Telemetry preflight happens before NCCL init; unavailable nvidia-smi fails run.
+- Existing CUDA TimingCollector/make_timing_hook behavior remains unchanged:
+  events synchronize once at end-of-run, never per-step; one all-reduce/update.
+- `academic_summary.csv` is source for new analysis. Historical `summary.csv`
+  is excluded. Interrupted runs leave partial artifacts and `.training_active`;
+  next run refuses until partial state is inspected.
+- Run order: baseline_1k acceptance first, 2node_1k acceptance second, derive
+  long subset from measured baseline_1k end-to-end rate, then baseline_long and
+  2node_long with identical sample count. No fifth calibration run.
+- Academic pair comparisons align validation/training curves by `tokens_seen`,
+  never raw optimizer step: baseline_1k has 250 updates while 2node_1k has
+  125 updates for same sample budget.
+- During long training runs, after confirming startup, poll artifacts/logs no
+  more often than every 15 minutes unless drastic change or an error requires
+  immediate inspection. Do not repeatedly poll active run state.
+- Resolved DDP configs live in `configs/resolved/`, are host-mounted into
+  containers, and must be hash-checked on both ranks. `scripts/prepare_2node.sh`
+  selects a completed baseline and prints the required scp/launch commands.
+- Academic campaign complete:
+  - `baseline_1k`: 1000 samples, 3286.125s, 26.807 tok/s, final val loss
+    0.606460, final val PPL 1.833927.
+  - `2node_1k`: 1000 samples, 1668.567s, 52.795 tok/s, comm=283.488ms/update
+    (2.87%), final val loss 0.572788, final val PPL 1.773204. Speedup=1.969x.
+  - `baseline_long`: 3288 samples, 8841.677s, 31.929 tok/s, final val loss
+    0.567638, final val PPL 1.764096.
+  - `2node_long`: 3288 samples, 4475.444s, 63.080 tok/s, comm=287.709ms/update
+    (2.93%), final val loss 0.565360, final val PPL 1.760081. Speedup=1.976x.
+  - Academic conclusions use only these four tags. Static figures live under
+    `logs/analysis/`; final measured report is `report.md`.
 
 ## Already done (user) — do NOT duplicate
 - Ubuntu 26.04 + NVIDIA driver installed+verified on both (nvidia-smi).
@@ -62,7 +98,8 @@ guaranteed speedup (no Tensor Cores on GTX 1650; FP16 ≈ FP32 rate).
   `nvidia` already registered in daemon.json. Do NOT reinstall/configure.
 
 ## Hard rules
-- NO git commands ever (no git init/commit/add/status).
+- No git commit/push unless user explicitly requests it. Read-only git checks
+  are allowed when needed to protect worktree state.
 - `uv` only (uv add / uv sync). pyproject.toml + uv.lock. Never pip, never
   requirements.txt — bare-metal AND in Dockerfile.
 - NCCL_SOCKET_IFNAME, MASTER_ADDR, static IPs: required config, NO default.
@@ -180,17 +217,22 @@ guaranteed speedup (no Tensor Cores on GTX 1650; FP16 ≈ FP32 rate).
 - Table shows ALL rows (TUI's last-40 was a terminal-height cap; browsers
   scroll). Timing CSV steps are 0-based, run CSV 1-based — merge by POSITION,
   never by step key (webui.py and tui.py both do this).
-- Demo: `uv run python -m src.webui --csv logs/run_default_rank0.csv` on A and
-  `... --csv logs/run_default_rank1.csv` on B, open http://localhost:8000 each.
-  `--host 0.0.0.0` to view the other machine's table from one laptop.
-- Phase 6 PASS: tested on A (plain TUI batch, rich TUI, web GUI page + API,
-  125 rows, 0 empty-timing). Live side-by-side = user runs it per machine.
+- Demo: generate figures with `uv run python -m src.analyze --scale all`, then
+  run `uv run python -m src.webui --pair 1k --analysis-dir logs/analysis` on A.
+  Legacy `--csv` mode remains available for one rank's table.
+- Phase 6 PASS: legacy viewer, pair dashboard, PNG serving, Academic Summary,
+  ZIP export, and A-only inference tab tested. TUI remains fallback.
+- Academic extension: `src/analyze.py` generates measured-only static PNGs;
+  `src/webui.py --pair 1k --inference` serves pair figures and A-only inference
+  tab. Inference loads one selected adapter at a time, toggles adapter layers
+  for BASE/FINETUNED output, uses same seed, safe local rendering, and blocks
+  while `.training_active` exists.
 
 ## Structure (from plan)
-Dockerfile, pyproject.toml, uv.lock, .env.example, configs/lora_config.yaml,
-scripts/launch_rank0.sh (laptop A), scripts/launch_rank1.sh (laptop B),
-src/{hello_world_dist.py, train_lora.py, metrics.py, infer.py, tui.py,
-webui.py}, logs/.
+Dockerfile, pyproject.toml, uv.lock, .env.example, configs/{lora_config.yaml,
+resolved/}, scripts/{build_image.sh,prepare_2node.sh,launch_rank0.sh,
+launch_rank1.sh}, src/{hello_world_dist.py,train_lora.py,metrics.py,analyze.py,
+infer.py,tui.py,webui.py,web/}, logs/.
 
 ## Inference UI (machine A only) — user does the prompting
 - After a training run, the rank-0 adapter is saved to
@@ -201,8 +243,8 @@ webui.py}, logs/.
   BASE and FINETUNED answers for each prompt. `--adapter` overrides the path,
   `--max-new-tokens` sets length. Runs on A only; comparison is the user's
   manual step — the agent only provides the interface.
-- Default adapter path derives from config `run_tag` (logs/baseline/adapter);
-  fails with a clear error if the dir is missing.
+- WebUI inference lists available academic adapters and loads one selected
+  adapter at a time; standalone inference accepts an explicit adapter path.
 - Generation is SAMPLING (do_sample, temp 0.7, top_p 0.9, repetition_penalty
   1.2) — greedy decode on the 0.5B loops/repeats and leaks CodeAlpaca "### "
   sections; output is cut at the first "\n### " drift. Default max-new-tokens=512.

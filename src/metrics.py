@@ -11,7 +11,11 @@ Design constraints (see AGENTS.md):
 from __future__ import annotations
 
 import csv
+import json
 import os
+import socket
+import subprocess
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -20,7 +24,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 import torch
 
 RUN_COLUMNS = ["step", "loss", "samples_processed"]
-TIMING_COLUMNS = ["step", "compute_ms", "comm_ms"]
+TIMING_COLUMNS = ["step", "compute_ms", "comm_ms", "data_ms", "eval_ms", "other_ms"]
 SUMMARY_COLUMNS = [
     "run_tag",
     "world_size",
@@ -36,6 +40,17 @@ SUMMARY_COLUMNS = [
     "extrapolated_epoch_s",
     "final_loss",
     "loss_criterion_met",
+    "train_wall_clock_s",
+    "validation_wall_clock_s",
+    "data_ms_per_update_avg",
+    "other_ms_per_update_avg",
+    "peak_vram_allocated_mib",
+    "peak_vram_reserved_mib",
+    "trainable_param_bytes",
+    "effective_bandwidth_mb_s",
+    "bandwidth_utilization_pct",
+    "final_val_loss",
+    "final_val_perplexity",
 ]
 
 
@@ -67,6 +82,93 @@ class LiveCSV:
 
     def close(self) -> None:
         self._fh.close()
+
+
+class ValidationCSV(LiveCSV):
+    """Validation rows, flushed so viewers can read them after each eval."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path, ["step", "tokens_seen", "val_loss", "val_perplexity", "eval_ms"])
+
+
+class GPUUtilizationSampler:
+    """Sample local GPU telemetry without touching CUDA event timing."""
+
+    def __init__(self, path: Path, rank: int, interval_s: float = 1.0) -> None:
+        self.path = path
+        self.rank = rank
+        self.interval_s = interval_s
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._start = 0.0
+        self._fh = None
+        self._writer = None
+
+    @staticmethod
+    def check_available() -> None:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader,nounits"],
+                check=True, capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SystemExit(f"nvidia-smi telemetry unavailable before training: {exc}")
+        if not result.stdout.strip():
+            raise SystemExit("nvidia-smi telemetry unavailable: no GPU reported")
+
+    def start(self) -> None:
+        self.check_available()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self.path, "w", newline="")
+        self._writer = csv.DictWriter(self._fh, fieldnames=[
+            "timestamp", "elapsed_s", "rank", "gpu_index",
+            "utilization_gpu_pct", "memory_used_mib",
+        ])
+        self._writer.writeheader()
+        self._fh.flush()
+        self._start = time.monotonic()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _sample(self) -> None:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used",
+             "--format=csv,noheader,nounits"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        now = time.time()
+        elapsed = time.monotonic() - self._start
+        for line in result.stdout.splitlines():
+            fields = [part.strip() for part in line.split(",")]
+            if len(fields) != 3:
+                continue
+            self._writer.writerow({
+                "timestamp": now,
+                "elapsed_s": round(elapsed, 3),
+                "rank": self.rank,
+                "gpu_index": fields[0],
+                "utilization_gpu_pct": fields[1],
+                "memory_used_mib": fields[2],
+            })
+        self._fh.flush()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._sample()
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                self._fh.write(f"# sampler_error={exc}\n")
+                self._fh.flush()
+                self._stop.wait(self.interval_s)
+                continue
+            self._stop.wait(self.interval_s)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=12)
+        if self._fh is not None:
+            self._fh.close()
 
 
 class TimingCollector:
@@ -189,7 +291,10 @@ def curve_matches(
 
 
 def write_timing_csv(
-    output_dir: str, run_tag: str, rank: int, compute: Dict[int, float], comm: Dict[int, float]
+    output_dir: str, run_tag: str, rank: int, compute: Dict[int, float],
+    comm: Dict[int, float], data: Optional[Dict[int, float]] = None,
+    evaluation: Optional[Dict[int, float]] = None,
+    other: Optional[Dict[int, float]] = None,
 ) -> Path:
     path = timing_csv_path(output_dir, run_tag, rank)
     with open(path, "w", newline="") as fh:
@@ -201,6 +306,9 @@ def write_timing_csv(
                     "step": step,
                     "compute_ms": round(compute.get(step, 0.0), 3),
                     "comm_ms": round(comm.get(step, 0.0), 3),
+                    "data_ms": round((data or {}).get(step, 0.0), 3),
+                    "eval_ms": round((evaluation or {}).get(step, 0.0), 3),
+                    "other_ms": round((other or {}).get(step, 0.0), 3),
                 }
             )
     return path
@@ -211,7 +319,7 @@ def write_summary_csv(
     row: Dict[str, object],
     summary_path: Optional[Path] = None,
 ) -> Path:
-    path = summary_path or summary_csv_path(output_dir)
+    path = summary_path or Path(output_dir) / "academic_summary.csv"
     header = SUMMARY_COLUMNS
     file_exists = path.exists()
     with open(path, "a", newline="") as fh:
@@ -219,6 +327,31 @@ def write_summary_csv(
         if not file_exists:
             writer.writeheader()
         writer.writerow({k: row.get(k, "") for k in header})
+    return path
+
+
+def write_metadata(output_dir: str, run_tag: str, cfg: dict, rank: int,
+                   world_size: int, resolved_config_path: Optional[Path] = None) -> Path:
+    run_dir = Path(output_dir) / run_tag
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "run_tag": run_tag,
+        "rank": rank,
+        "world_size": world_size,
+        "hostname": socket.gethostname(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "model": cfg.get("model", {}),
+        "dataset": cfg.get("dataset", {}),
+        "training": cfg.get("training", {}),
+        "lora": cfg.get("lora", {}),
+    }
+    path = run_dir / f"metadata_rank{rank}.json"
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    if rank == 0:
+        (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+        (run_dir / "config.json").write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+    if resolved_config_path is not None:
+        resolved_config_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
     return path
 
 

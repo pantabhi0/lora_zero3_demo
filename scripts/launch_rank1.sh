@@ -9,6 +9,22 @@ fi
 
 IMG="${IMG:-hetero-demo:latest}"
 
+CONFIG="${CONFIG:-configs/lora_config.yaml}"
+MODE="distributed"
+if [ "${1:-}" = "--single-gpu" ]; then
+    MODE="single"
+    shift
+fi
+if [ "${1:-}" = "--config" ]; then
+    CONFIG="${2:?missing config path}"
+    shift 2
+fi
+
+DIST_ARGS=()
+if [ "$MODE" = "distributed" ]; then
+    DIST_ARGS+=(--distributed)
+fi
+
 exec docker run --rm \
     --gpus all \
     --network host \
@@ -19,5 +35,6 @@ exec docker run --rm \
     --env RANK=1 \
     --volume "$(pwd)/hf_cache:/root/.cache/huggingface" \
     --volume "$(pwd)/logs:/app/logs" \
+    --volume "$(pwd)/configs:/app/configs" \
     "$IMG" \
-    python -m src.train_lora --config configs/lora_config.yaml --distributed "$@"
+    python -m src.train_lora --config "$CONFIG" "${DIST_ARGS[@]}" "$@"

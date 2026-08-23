@@ -5,6 +5,7 @@ description = "2-node LoRA fine-tuning demo over gigabit: single GTX 1650 vs DDP
 requires-python = ">=3.10"
 dependencies = [
     "datasets>=3.0",
+    "matplotlib>=3.8",
     "peft>=0.13",
     "pyyaml>=6.0",
     "rich>=13.0",

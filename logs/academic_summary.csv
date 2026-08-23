@@ -1,0 +1,5 @@
+run_tag,world_size,rank,total_samples,total_updates,wall_clock_s,samples_per_sec,tokens_per_sec,compute_ms_per_update_avg,comm_ms_per_update_avg,comm_pct_of_step,extrapolated_epoch_s,final_loss,loss_criterion_met,train_wall_clock_s,validation_wall_clock_s,data_ms_per_update_avg,other_ms_per_update_avg,peak_vram_allocated_mib,peak_vram_reserved_mib,trainable_param_bytes,effective_bandwidth_mb_s,bandwidth_utilization_pct,final_val_loss,final_val_perplexity
+baseline_1k,1,0,1000,250,3286.125,0.304,26.807,9716.168,0.0,0.0,3286.125,1.02393,0,2433.308,852.816,6.443,10.621,1631.491,1860.0,35192832,0.0,0.0,0.60646,1.833927
+2node_1k,2,0,1000,125,1668.567,0.599,52.795,9581.403,283.488,2.87,1668.567,2.09748,0,1241.879,426.688,57.76,12.38,1665.054,1924.0,35192832,124.142,99.314,0.572788,1.773204
+baseline_long,1,0,3288,822,8841.677,0.372,31.929,9704.481,0.0,0.0,8841.677,0.451276,0,7988.705,852.972,5.692,8.447,1631.491,1860.0,35192832,0.0,0.0,0.567638,1.764096
+2node_long,2,0,3288,411,4475.444,0.735,63.08,9534.843,287.709,2.93,4475.444,0.62502,0,4049.589,425.855,21.512,8.951,1665.054,1924.0,35192832,122.321,97.857,0.56536,1.760081

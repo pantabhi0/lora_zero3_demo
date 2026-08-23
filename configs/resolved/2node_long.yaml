@@ -1,0 +1,30 @@
+dataset:
+  name: sahil2801/CodeAlpaca-20k
+  seed: 42
+  subset_size: 3288
+  validation_size: 100
+logging:
+  output_dir: logs
+  run_tag: 2node_long
+lora:
+  alpha: 32
+  dropout: 0.05
+  r: 16
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+model:
+  fp16: true
+  gradient_checkpointing: true
+  name: Qwen/Qwen2.5-0.5B
+training:
+  batch_size: 1
+  grad_accumulation_steps: 4
+  learning_rate: 0.0001
+  num_epochs: 1
+  seq_length: 256

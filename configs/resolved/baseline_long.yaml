@@ -5,7 +5,7 @@ model:
 
 dataset:
   name: sahil2801/CodeAlpaca-20k
-  subset_size: 1000
+  subset_size: 3288
   validation_size: 100
   seed: 42
 
@@ -31,4 +31,4 @@ lora:
 
 logging:
   output_dir: logs
-  run_tag: baseline_1k
+  run_tag: baseline_long

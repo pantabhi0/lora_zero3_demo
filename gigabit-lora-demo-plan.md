@@ -19,35 +19,27 @@ per-phase status notes below and in `README.md` / `documentation.md`.
 
 ## Status and measured results (as-built)
 
+Academic campaign is complete. Use only these four tags for final conclusions:
+`baseline_1k`, `2node_1k`, `baseline_long`, and `2node_long`. Historical
+`baseline` and `default` artifacts are retained only for reference. Academic
+loss uses correct response-only `-100` masking and held-out validation; curves
+are aligned by `tokens_seen`, never raw optimizer step.
+
 | Phase | Result |
 | --- | --- |
 | −1 Host prerequisites | PASS (driver, prime-select, AC/perf, uv, Docker+Toolkit both) |
 | 0 Network | PASS — A `192.168.50.1/24` (`eno1`), B `192.168.50.2/24` (`enp44s0`); gigabit forced with `ethtool` (link partner originally advertised 10/100 — bad cable); ping ≈0.58 ms |
 | 1 Bare-metal hello | PASS — `all_reduce ok: tensor[0]=3.0` both ranks, clean exit |
 | 2 Dockerized hello | PASS — same `3.0` inside containers (`--network host`, `--env-file .env`) |
-| 3 Baseline (1 GPU) | PASS — 250 updates, 2410.95 s wall, 0.415 samples/s, final loss 0.521; criterion MET (first25=2.46 → last25=0.37) |
-| 4 2-node DDP | PASS — 125 updates, 1230.38 s wall (**1.96×**), 0.813 samples/s, comm 381 ms/update (**3.9%**), final loss 0.343; curve match vs baseline OK, max_rel=0.0017 |
+| 3/4 Academic 1k pair | PASS — `baseline_1k` 3286.125 s, `2node_1k` 1668.567 s, speedup 1.969x; final validation loss 0.606460/0.572788 |
+| 3/4 Academic long pair | PASS — `baseline_long` 8841.677 s, `2node_long` 4475.444 s, speedup 1.976x; final validation loss 0.567638/0.565360 |
 | 5 Metrics | PASS — torch.profiler cross-check: hook 3784.9 ms vs profiler NCCL kernels 3777.3 ms over same window (**0.2% agreement**) → hook methodology trusted |
-| 6 Web GUI | PASS — `src/webui.py` (stdlib, `--host 0.0.0.0`), page + `/api/rows`, 125 rows, 0 empty-timing; `src/tui.py` kept as fallback |
+| 6 Web GUI | PASS — legacy viewer, academic pair dashboard, PNG serving, Academic Summary, ZIP export, A-only inference tab; `src/tui.py` fallback |
 
-Headline numbers (1000 CodeAlpaca samples, 1 epoch, batch 1, seq 256,
-grad-accum 4, LoRA r=16):
-
-| Metric | Baseline (1 GPU) | 2-node DDP |
-| --- | ---: | ---: |
-| Optimizer updates | 250 | 125 |
-| Wall clock | 2410.95 s | 1230.38 s |
-| Samples/sec | 0.415 | 0.813 |
-| Tokens/sec | 106.2 | 208.1 |
-| Compute per update | 9629.4 ms | 9396.4 ms |
-| Comm per update | — | 381.3 ms (3.9%) |
-| Final loss | 0.521 | 0.343 |
-
-Interpretation: compute per update is nearly identical on both configs (each
-GPU does the same forward/backward); the all-reduce costs only 3.9% of a
-9.4 s step, so 2-node wins ~2× by halving the number of sequential updates.
-The final-loss difference (0.52 vs 0.34) is the larger effective batch per
-update of the DDP run, not a bug — per-step curve agreement is 0.17%.
+Headline academic numbers are maintained in `logs/academic_summary.csv` and
+fully interpreted in `report.md`. Compare curves by `tokens_seen`, never raw
+optimizer step. Historical training loss uses different label semantics and is
+excluded from academic conclusions.
 
 ---
 
@@ -324,9 +316,8 @@ inside the Docker container, and per-step compute time plus total
 wall-clock time for the run are logged to a file. This is your baseline
 for the Phase 5 comparison.
 
-**Measured:** 250 optimizer updates, 2410.95 s wall, 0.415 samples/s,
-106.2 tok/s, 9629.4 ms compute/update, final loss 0.521, criterion MET
-(first25=2.46 → last25=0.37). Adapter saved to `logs/baseline/adapter`.---
+Historical baseline artifacts remain for debugging only; academic baseline is
+`baseline_1k` and `baseline_long`.---
 
 ## Phase 4 — Two-node distributed LoRA run via DDP
 
@@ -362,18 +353,10 @@ produces a valid loss curve, and logs per-step compute time, per-step
 comm time, and total wall-clock time — using the same config as the Phase
 3 baseline run.
 
-**Measured:** 125 optimizer updates (2× fewer than baseline — each update
-consumes `world_size × batch × accum` = 8 samples), 1230.38 s wall
-(**1.96× faster**), 0.813 samples/s, 208.1 tok/s, compute 9396.4
-ms/update, comm 381.3 ms/update (**3.9%**), final loss 0.343, criterion
-MET. Curve match vs baseline: OK, max_rel = 0.0017 (bit-level divergence
-from all-reduce summation-order non-associativity is expected; beyond
-tolerance = bug). Adapter saved to `logs/default/adapter`.
-
-**run_tag quirk:** `configs/lora_config.yaml` sets `logging.run_tag:
-default`, so the auto "2node"/"baseline" fallback in `train_lora.py` never
-fires — the 2-node run is tagged `default`, and the Phase 3 baseline used
-`--run-tag baseline` explicitly.
+Historical DDP artifacts remain for debugging only; academic DDP artifacts are
+`2node_1k` and `2node_long`. The historical run_tag quirk (`run_tag: default`)
+no longer applies: academic configs resolve tags explicitly and training
+rejects non-campaign tags.
 
 ---
 
@@ -393,7 +376,7 @@ fires — the 2-node run is tagged `default`, and the Phase 3 baseline used
 3. **Absolute practicality.** Log actual tokens/sec for both runs, and
    extrapolate to a full-epoch time estimate for each (e.g. "at this rate,
    one epoch would take ~X minutes"). *(As-built: 106.2 vs 208.1 tok/s;
-   `extrapolated_epoch_s` in summary.csv.)*
+   `extrapolated_epoch_s` in academic_summary.csv.)*
 4. **Batch size / sequence length capability (build now, run later if time
    allows).** Since these are already config-driven per Phase 3, no extra
    code is needed — this is just "manually change the config value and
@@ -448,8 +431,9 @@ because the CSS contains `width:100%`.)*
 **Phase 6 add-on — inference UI (machine A only):** `src/infer.py` loads the
 base Qwen2.5-0.5B AND the trained adapter (two ~0.5B fp16 models, fits the
 4 GB 1650), REPL that prints BASE and FINETUNED answers side by side.
-Default adapter path derives from config run_tag (`logs/default/adapter`);
-fails with a clear error if missing. Generation is SAMPLING (do_sample,
+Academic inference lists the four campaign adapters and loads one selected
+adapter at a time; fails with a clear error if missing. Generation is SAMPLING
+(do_sample,
 temp 0.7, top_p 0.9, repetition_penalty 1.2) — greedy decode loops/repeats
 on a 0.5B and leaks CodeAlpaca "### " sections; output is cut at the first
 `\n### `. Default `--max-new-tokens 512` (practical ceiling ~8000 on the
@@ -479,7 +463,7 @@ hetero-demo/
     infer.py                # Phase 6 add-on (base vs finetuned, machine A)
     tui.py                  # Phase 6 fallback (rich or plain stdout)
     webui.py                # Phase 6 primary viewer (stdlib web GUI)
-  logs/                     # run_*/timing_*_rank<N>.csv, summary.csv, adapters
+  logs/                     # academic CSVs, analysis PNGs, adapters
   hf_cache/                 # volume-mounted HF cache (download once per machine)
 ```
 
